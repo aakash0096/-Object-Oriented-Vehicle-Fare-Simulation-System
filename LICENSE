@@ -1,21 +1,101 @@
-MIT License
+# SmartFare — Smart Vehicle Fare System
 
-Copyright (c) 2026 aakash0096
+A console-based C++ application that simulates a multi-vehicle fare/booking system (think a simplified Uber/Ola backend). It demonstrates core OOP concepts — inheritance, polymorphism, operator overloading, friend functions, static members, exceptions, and lambdas — inside a single working CLI program.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+## Features
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+- **7 vehicle types**, each with its own fare slab logic, via runtime polymorphism:
+  - Car, Bus, Bike, Auto, Luxury Car, Truck, Shared Cab
+- **Customer accounts** with types (`regular`, `student`, `senior`, `member`), each carrying its own discount rate
+- **Coupon codes**: `SAVE10`, `FIRST50`, `VIT25` (total discount capped at 50%)
+- **Extra charges**: night surcharge, peak-hour surcharge, waiting-time charge, luggage charge, admin-configurable surge multiplier
+- **Trip history** per customer, with total spend and average fare
+- **Trip cancellation** — cancels a customer's most recent active trip; cancelled trips are excluded from totals but kept in the log
+- **Fare comparison** between any two vehicles for a given distance (via a `friend` function)
+- **Lambda-based filtering** of trips above a fare threshold
+- **Customer merging** via overloaded `operator+`, combining two customers' trip histories
+- **Search** trips by (partial, case-insensitive) customer name
+- **Fleet statistics**: trips per vehicle, earnings per vehicle, most popular vehicle, average fare
+- **File persistence**: every trip is appended to `trip_history.txt`; the admin can export a full CSV summary to `trip_summary.csv`
+- **Admin panel** (password protected) for fleet/earnings/customer stats, surge control, and exports
+- Robust input handling and custom exceptions for invalid distances, invalid input, and invalid coupons
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+## Requirements
+
+- A C++17-capable compiler (e.g. `g++` 7+ or `clang++`)
+- No external libraries — only the C++ standard library
+
+## Building
+
+```bash
+g++ -std=c++17 -Wall -Wextra -o smartfare smart_vehicle_fare_system.cpp
+```
+
+## Running
+
+```bash
+./smartfare
+```
+
+The program runs an interactive text menu; just follow the prompts.
+
+## Main Menu
+
+| # | Option |
+|---|--------|
+| 1 | Register / switch customer |
+| 2 | Book a ride |
+| 3 | View available vehicles |
+| 4 | My trip history |
+| 5 | Compare two vehicle fares (friend function) |
+| 6 | Filter trips by fare (lambda) |
+| 7 | Merge two customers (operator `+`) |
+| 8 | Admin panel |
+| 9 | Cancel my last trip |
+| 10 | Search trips by customer name |
+| 11 | Show fleet statistics |
+| 12 | Exit |
+
+## Admin Panel
+
+Default password: **`admin123`**
+
+| # | Option |
+|---|--------|
+| 1 | Total vehicles created |
+| 2 | Total earnings |
+| 3 | Total customers |
+| 4 | View all trip records (from file) |
+| 5 | Set surge multiplier |
+| 6 | Export trip summary to CSV |
+| 7 | Exit admin |
+
+## Vehicle Fare Rules
+
+| Vehicle | Base Rate | Min Fare | Slab Logic |
+|---|---|---|---|
+| Car | Rs.15/km | Rs.80 | 0–5 km: min fare · 5–15 km: Rs.15/km · 15+ km: Rs.12/km |
+| Bus | Rs.5/km | Rs.30 | 0–10 km: min fare · 10+ km: Rs.5/km |
+| Bike | Rs.8/km | Rs.40 | 0–3 km: min fare · 3+ km: Rs.8/km |
+| Auto | Rs.10/km | Rs.50 | 0–4 km: min fare · 4+ km: Rs.10/km |
+| Luxury Car | Rs.25/km | Rs.200 | Flat base + per-km, no slabs |
+| Truck | Rs.18/km | Rs.150 | 0–8 km: min fare · 8+ km: Rs.18/km |
+| Shared Cab | Rs.7/km | Rs.45 | 0–6 km: min fare · 6+ km: Rs.7/km, then 15% pooled discount |
+
+Discounts (customer type + coupon) apply after surcharges, capped at 50% total.
+
+## Output Files
+
+- `trip_history.txt` — plain-text append log of every booked trip (created/updated automatically)
+- `trip_summary.csv` — CSV export of all trips, generated on demand from the Admin Panel
+
+## Project Structure (single file)
+
+- **Exceptions**: `InvalidDistanceException`, `InvalidInputException`, `InvalidCouponException`
+- **`Vehicle`** (abstract base) → `Car`, `Bus`, `Bike`, `Auto`, `LuxuryCar`, `Truck`, `SharedCab`
+- **`Customer`** — profile, coupon, trip history, merge operator
+- **`FareCalculator`** — surcharges, discounts, surge pricing
+- **`FileHandler`** — trip logging and CSV export
+- **`ReceiptGenerator`** — formatted receipt printing
+- **`AdminPanel`** — password-gated admin operations
+- Free functions: `compareFares` (friend), `currentTime`, `safeIntInput`, `safeDoubleInput`, `searchTripsByCustomer`, `showStatistics`

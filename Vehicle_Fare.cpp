@@ -9,6 +9,13 @@
 #include <ctime>
 #include <functional>
 #include <limits>
+#include <sstream>
+#include <map>
+#include <cstdlib>
+#include <queue>
+#include <mutex>
+#include <thread>
+#include <chrono>
 
 using namespace std;
 
@@ -26,6 +33,13 @@ public:
     const char* what() const noexcept override { return msg.c_str(); }
 };
 
+class InsufficientFundsException : public exception {
+public:
+    const char* what() const noexcept override {
+        return "Insufficient funds in wallet!";
+    }
+};
+
 class InvalidCouponException : public exception {
 public:
     const char* what() const noexcept override {
@@ -41,19 +55,55 @@ public:
 };
 
 struct TripRecord {
+    string tripID;
     string customerName;
     string vehicleType;
     double distance;
-    double fare;
+    double baseFare;
+    double surgeMultiplier;
+    double finalFare;
+    double baggageFee;
+    string paymentMethod;
+    string status;
     string timestamp;
     double baggageFee;
-    int    rating;   // -1 = not rated, 1-5 = star rating
+    int    rating;
+    string couponUsed;
+    string driverName;
+    string userID;
+    int    etaMinutes;
 
-    TripRecord(const string& cn, const string& vt,
-               double d, double f, const string& ts,
-               double bagFee = 0.0, int rt = -1)
-        : customerName(cn), vehicleType(vt), distance(d), fare(f),
-          timestamp(ts), baggageFee(bagFee), rating(rt) {}
+    TripRecord(const string& id, const string& cn, const string& vt,
+               double d, double bf, double sm, double ff,
+               const string& ts, double bagFee = 0.0, int rt = -1,
+               const string& cup = "", const string& drv = "", 
+               const string& uid = "", int et = 0, const string& pay = "Cash")
+        : tripID(id), customerName(cn), vehicleType(vt), distance(d), baseFare(bf),
+          surgeMultiplier(sm), finalFare(ff), timestamp(ts), baggageFee(bagFee),
+          rating(rt), couponUsed(cup), driverName(drv), userID(uid), etaMinutes(et), paymentMethod(pay) {}
+};
+
+class Driver {
+public:
+    string driverID;
+    string name;
+    string currentStatus;
+    double rating;
+    int totalTrips;
+    string assignedTripID;
+
+    Driver(string id, string n) : driverID(id), name(n), currentStatus("Available"), rating(5.0), totalTrips(0), assignedTripID("") {}
+
+    void assignTrip(string tripID) {
+        assignedTripID = tripID;
+        currentStatus = "Busy";
+    }
+
+    void completeTrip() {
+        assignedTripID = "";
+        currentStatus = "Available";
+        totalTrips++;
+    }
 };
 
 class Vehicle {
@@ -62,29 +112,23 @@ protected:
     string vehicleName;
     double ratePerKm;
     double minimumFare;
-
-    static int    totalVehicles;
-    static double totalEarnings;
+    bool   isAC;
 
 public:
-    Vehicle(int id, const string& name, double rate, double minFare)
-        : vehicleID(id), vehicleName(name), ratePerKm(rate), minimumFare(minFare) {
-        ++totalVehicles;
-        cout << "  [CREATED] Vehicle object: " << vehicleName << "\n";
-    }
+    Vehicle(int id, const string& name, double rate, double minFare, bool ac = false)
+        : vehicleID(id), vehicleName(name), ratePerKm(rate), minimumFare(minFare), isAC(ac) {}
 
-    virtual ~Vehicle() {
-        cout << "  [DESTROYED] Vehicle object: " << vehicleName << "\n";
-    }
+    virtual ~Vehicle() {}
 
-    virtual double calculateFare(double distanceKm) = 0;
+    virtual double calculateBaseFare(double distanceKm) = 0;
 
     virtual void displayDetails() const {
         cout << fixed << setprecision(2)
              << "  ID: " << vehicleID
              << "  Name: " << vehicleName
              << "  Rate/km: Rs." << ratePerKm
-             << "  Min Fare: Rs." << minimumFare << "\n";
+             << "  Min Fare: Rs." << minimumFare
+             << "  AC: " << (isAC ? "Yes" : "No") << "\n";
     }
 
     virtual bool allowsBaggage() const { return true; }
@@ -94,751 +138,624 @@ public:
     int    getVehicleID()    const { return vehicleID;   }
     double getRatePerKm()    const { return ratePerKm;   }
     double getMinimumFare()  const { return minimumFare; }
-
-    static int    getTotalVehicles()      { return totalVehicles; }
-    static double getTotalEarnings()      { return totalEarnings; }
-    static void   addEarnings(double amt) { totalEarnings += amt; }
-
-    friend void compareFares(Vehicle& v1, Vehicle& v2, double distanceKm);
+    bool   getIsAC()         const { return isAC; }
 };
 
-int    Vehicle::totalVehicles = 0;
-double Vehicle::totalEarnings = 0.0;
-
-void compareFares(Vehicle& v1, Vehicle& v2, double distanceKm) {
-    if (distanceKm < 0)
-        throw InvalidDistanceException("Distance for comparison cannot be negative!");
-
-    double fare1 = v1.calculateFare(distanceKm);
-    double fare2 = v2.calculateFare(distanceKm);
-
-    cout << "\n  ===== FARE COMPARISON  (" << distanceKm << " km) =====\n";
-    cout << fixed << setprecision(2);
-    cout << "  " << v1.vehicleName << "  :  Rs." << fare1 << "\n";
-    cout << "  " << v2.vehicleName << "  :  Rs." << fare2 << "\n";
-    if (fare1 < fare2)
-        cout << "  >> " << v1.vehicleName << " is cheaper by Rs." << (fare2 - fare1) << "\n";
-    else if (fare2 < fare1)
-        cout << "  >> " << v2.vehicleName << " is cheaper by Rs." << (fare1 - fare2) << "\n";
-    else
-        cout << "  >> Both vehicles charge the same fare!\n";
-    cout << "  ================================================\n";
-}
-
-class Car : public Vehicle {
+class StandardCar : public Vehicle {
 public:
-    Car() : Vehicle(1, "Car", 15.0, 80.0) {}
-
-    double calculateFare(double dist) override {
-        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
-        double fare;
-        if      (dist <= 5)  fare = minimumFare;
-        else if (dist <= 15) fare = minimumFare + (dist - 5)  * ratePerKm;
-        else                 fare = minimumFare + 10 * ratePerKm + (dist - 15) * 12.0;
+    StandardCar(int id) : Vehicle(id, "Standard Car", 15.0, 50.0, false) {}
+    double calculateBaseFare(double distanceKm) override {
+        if (distanceKm < 0) throw InvalidDistanceException("Distance cannot be negative");
+        double fare = distanceKm * ratePerKm;
         return max(fare, minimumFare);
     }
-
-    void displayDetails() const override {
-        cout << "  [CAR]        Rate: Rs.15/km | Min: Rs.80 | Slabs: 0-5(min), 5-15(Rs.15), 15+(Rs.12)\n";
-    }
+    bool allowsBaggage() const override { return true; }
+    int  freeBagAllowance() const override { return 1; }
 };
 
-class Bus : public Vehicle {
-    int seatingCapacity;
+class PremiumCar : public Vehicle {
 public:
-    Bus() : Vehicle(2, "Bus", 5.0, 30.0), seatingCapacity(40) {}
-
-    double calculateFare(double dist) override {
-        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
-        double fare = (dist <= 10) ? minimumFare : minimumFare + (dist - 10) * ratePerKm;
+    PremiumCar(int id) : Vehicle(id, "Premium Car", 25.0, 100.0, true) {}
+    double calculateBaseFare(double distanceKm) override {
+        if (distanceKm < 0) throw InvalidDistanceException("Distance cannot be negative");
+        double fare = distanceKm * ratePerKm;
         return max(fare, minimumFare);
     }
-
-    void displayDetails() const override {
-        cout << "  [BUS]        Rate: Rs.5/km  | Min: Rs.30 | Capacity: " << seatingCapacity << " seats\n";
-    }
+    bool allowsBaggage() const override { return true; }
+    int  freeBagAllowance() const override { return 2; }
 };
 
-class Bike : public Vehicle {
+class AutoRickshaw : public Vehicle {
 public:
-    Bike() : Vehicle(3, "Bike", 8.0, 40.0) {}
-
-    double calculateFare(double dist) override {
-        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
-        double fare = (dist <= 3) ? minimumFare : minimumFare + (dist - 3) * ratePerKm;
-        return max(fare, minimumFare);
+    AutoRickshaw(int id) : Vehicle(id, "Auto Rickshaw", 10.0, 30.0, false) {}
+    double calculateBaseFare(double distanceKm) override {
+        if (distanceKm < 0) throw InvalidDistanceException("Distance cannot be negative");
+        if (distanceKm <= 2.0) return minimumFare;
+        return minimumFare + (distanceKm - 2.0) * 10.0;
     }
-
-    void displayDetails() const override {
-        cout << "  [BIKE]       Rate: Rs.8/km  | Min: Rs.40 | Slabs: 0-3(min), 3+(Rs.8)\n";
-    }
-
-    bool allowsBaggage() const override { return false; }
+    bool allowsBaggage() const override { return true; }
+    int  freeBagAllowance() const override { return 0; }
 };
 
-class Auto : public Vehicle {
+class Coupon {
 public:
-    Auto() : Vehicle(4, "Auto", 10.0, 50.0) {}
+    string code;
+    double discountPercent;
+    bool active;
 
-    double calculateFare(double dist) override {
-        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
-        double fare = (dist <= 4) ? minimumFare : minimumFare + (dist - 4) * ratePerKm;
-        return max(fare, minimumFare);
-    }
-
-    void displayDetails() const override {
-        cout << "  [AUTO]       Rate: Rs.10/km | Min: Rs.50 | Slabs: 0-4(min), 4+(Rs.10)\n";
-    }
+    Coupon(string c, double d) : code(c), discountPercent(d), active(true) {}
+    bool isValid() const { return active; }
+    double getDiscount() const { return discountPercent; }
 };
 
-class LuxuryCar : public Vehicle {
-    string carModel;
+class User {
 public:
-    LuxuryCar() : Vehicle(5, "Luxury Car", 25.0, 200.0), carModel("Premium Sedan") {}
-
-    double calculateFare(double dist) override {
-        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
-        return max(minimumFare + dist * ratePerKm, minimumFare);
-    }
-
-    void displayDetails() const override {
-        cout << "  [LUXURY CAR] Rate: Rs.25/km | Min: Rs.200 | Model: " << carModel << " | 1 free bag\n";
-    }
-
-    int freeBagAllowance() const override { return 1; }
-};
-
-class SUV : public Vehicle {
-    int seatingCapacity;
-public:
-    SUV() : Vehicle(6, "SUV", 20.0, 150.0), seatingCapacity(7) {}
-
-    double calculateFare(double dist) override {
-        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
-        double fare = (dist <= 6) ? minimumFare : minimumFare + (dist - 6) * ratePerKm;
-        return max(fare, minimumFare);
-    }
-
-    void displayDetails() const override {
-        cout << "  [SUV]        Rate: Rs.20/km | Min: Rs.150 | Seats: " << seatingCapacity << " | 1 free bag\n";
-    }
-
-    int freeBagAllowance() const override { return 1; }
-};
-
-class MiniVan : public Vehicle {
-    int seatingCapacity;
-public:
-    MiniVan() : Vehicle(7, "MiniVan", 18.0, 120.0), seatingCapacity(8) {}
-
-    double calculateFare(double dist) override {
-        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
-        double fare = (dist <= 8) ? minimumFare : minimumFare + (dist - 8) * ratePerKm;
-        return max(fare, minimumFare);
-    }
-
-    void displayDetails() const override {
-        cout << "  [MINIVAN]    Rate: Rs.18/km | Min: Rs.120 | Seats: " << seatingCapacity << "\n";
-    }
-};
-
-class Truck : public Vehicle {
-    double capacityTons;
-public:
-    Truck() : Vehicle(8, "Truck", 22.0, 250.0), capacityTons(1.5) {}
-
-    double calculateFare(double dist) override {
-        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
-        double fare = minimumFare + dist * ratePerKm;
-        return max(fare, minimumFare);
-    }
-
-    void displayDetails() const override {
-        cout << "  [TRUCK]      Rate: Rs.22/km | Min: Rs.250 | Capacity: " << capacityTons
-             << " tons | 1 free bag\n";
-    }
-
-    int freeBagAllowance() const override { return 1; }
-};
-
-class Bicycle : public Vehicle {
-public:
-    Bicycle() : Vehicle(9, "Bicycle", 3.0, 10.0) {}
-
-    double calculateFare(double dist) override {
-        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
-        double fare = (dist <= 2) ? minimumFare : minimumFare + (dist - 2) * ratePerKm;
-        return max(fare, minimumFare);
-    }
-
-    void displayDetails() const override {
-        cout << "  [BICYCLE]    Rate: Rs.3/km  | Min: Rs.10 | Eco-friendly | No baggage allowed\n";
-    }
-
-    bool allowsBaggage() const override { return false; }
-};
-
-const int NUM_VEHICLES = 9;
-
-class Customer {
-    string name;
-    string customerType;
-    string couponCode;
-    vector<TripRecord> tripHistory;
-
-    static int totalCustomers;
-
-public:
-    Customer(const string& n, const string& type = "regular")
-        : name(n), customerType(type), couponCode("") {
-        ++totalCustomers;
-        cout << "  [REGISTERED] Customer: " << name << " (" << customerType << ")\n";
-    }
-
-    ~Customer() {
-        cout << "  [SESSION ENDED] Customer: " << name << "\n";
-    }
-
-    void setCoupon(const string& code) { couponCode = code; }
-
-    string getName()   const { return name;         }
-    string getType()   const { return customerType; }
-    string getCoupon() const { return couponCode;   }
-
-    void addTrip(const TripRecord& tr) { tripHistory.push_back(tr); }
-
-    void showHistory() const {
-        if (tripHistory.empty()) { cout << "  No trips yet.\n"; return; }
-        cout << "\n  ===== TRIP HISTORY: " << name << " =====\n";
-        for (size_t i = 0; i < tripHistory.size(); ++i) {
-            cout << fixed << setprecision(2)
-                 << "  Trip " << (i + 1) << " | " << tripHistory[i].vehicleType
-                 << " | " << tripHistory[i].distance << " km"
-                 << " | Rs." << tripHistory[i].fare
-                 << " | Bag Fee: Rs." << tripHistory[i].baggageFee
-                 << " | " << tripHistory[i].timestamp;
-            if (tripHistory[i].rating >= 1)
-                cout << " | Rating: " << tripHistory[i].rating << "/5";
-            else
-                cout << " | Rating: Not rated";
-            cout << "\n";
-        }
-    }
-
-    double totalSpent() const {
-        double sum = 0;
-        for (const auto& t : tripHistory) sum += t.fare;
-        return sum;
-    }
-
-    Customer operator+(const Customer& other) const {
-        Customer merged("Merged[" + name + "+" + other.name + "]", "regular");
-        for (const auto& t : tripHistory)       merged.tripHistory.push_back(t);
-        for (const auto& t : other.tripHistory) merged.tripHistory.push_back(t);
-        return merged;
-    }
-
-    static int getTotalCustomers() { return totalCustomers; }
-};
-
-int Customer::totalCustomers = 0;
-
-class FareCalculator {
-    double surgeMultiplier;
-
-    static constexpr double SMALL_BAG_FEE  = 20.0;
-    static constexpr double MEDIUM_BAG_FEE = 40.0;
-    static constexpr double LARGE_BAG_FEE  = 70.0;
-
-public:
-    FareCalculator() : surgeMultiplier(1.0) {}
-
-    void setSurge(double m) {
-        if (m <= 0) throw InvalidInputException("Surge multiplier must be positive!");
-        surgeMultiplier = m;
-        cout << "  [ADMIN] Surge pricing set to " << m << "x\n";
-    }
-
-    double getSurge() const { return surgeMultiplier; }
-
-    double applyCharges(double baseFare, bool night, bool peak,
-                        int waitMins, double luggageKg) {
-        double fare = baseFare * surgeMultiplier;
-        if (surgeMultiplier != 1.0)
-            cout << "  [Surge " << surgeMultiplier << "x] Applied\n";
-
-        if (night)  { fare *= 1.20; cout << "  [Night Charge +20%] Applied\n"; }
-        if (peak)   { fare *= 1.15; cout << "  [Peak Hour +15%] Applied\n";    }
-
-        if (waitMins > 0) {
-            double wc = waitMins * 2.0;
-            fare += wc;
-            cout << "  [Waiting Rs." << fixed << setprecision(2) << wc
-                 << " for " << waitMins << " min] Applied\n";
-        }
-        if (luggageKg > 0) {
-            double lc = luggageKg * 10.0;
-            fare += lc;
-            cout << "  [Luggage Rs." << fixed << setprecision(2) << lc
-                 << " for " << luggageKg << " kg] Applied\n";
-        }
-        return fare;
-    }
-
-    // Baggage check-in: per-bag fee by size, with a free-bag allowance for
-    // some vehicle types (applied to the costliest bag category first).
-    double applyBaggageFee(int smallBags, int mediumBags, int largeBags,
-                            int freeAllowance, bool& freeApplied) {
-        if (smallBags < 0 || mediumBags < 0 || largeBags < 0)
-            throw InvalidBaggageException("Bag counts cannot be negative!");
-
-        double fee = smallBags * SMALL_BAG_FEE
-                   + mediumBags * MEDIUM_BAG_FEE
-                   + largeBags * LARGE_BAG_FEE;
-
-        freeApplied = false;
-        int totalBags = smallBags + mediumBags + largeBags;
-        if (freeAllowance > 0 && totalBags > 0) {
-            if (largeBags > 0)       { fee -= LARGE_BAG_FEE;  freeApplied = true; }
-            else if (mediumBags > 0) { fee -= MEDIUM_BAG_FEE; freeApplied = true; }
-            else if (smallBags > 0)  { fee -= SMALL_BAG_FEE;  freeApplied = true; }
-        }
-        return max(fee, 0.0);
-    }
-
-    double applyDiscount(double fare, const Customer& cust) {
-        double disc = 0.0;
-
-        if      (cust.getType() == "student") { disc = 0.10; cout << "  [Student Discount 10%]\n"; }
-        else if (cust.getType() == "senior")  { disc = 0.15; cout << "  [Senior Citizen 15%]\n";   }
-        else if (cust.getType() == "member")  { disc = 0.20; cout << "  [Membership 20%]\n";       }
-
-        string coupon = cust.getCoupon();
-        if      (coupon == "SAVE10")  { disc += 0.10; cout << "  [Coupon SAVE10 +10%]\n";    }
-        else if (coupon == "FIRST50") { disc += 0.50; cout << "  [Coupon FIRST50 +50%]\n";   }
-        else if (coupon == "VIT25")   { disc += 0.25; cout << "  [Coupon VIT25 +25%]\n";     }
-        else if (!coupon.empty())     { throw InvalidCouponException(); }
-
-        disc = min(disc, 0.50);
-        return fare * (1.0 - disc);
-    }
-
-    static double roundFare(double fare) { return round(fare); }
-};
-
-constexpr double FareCalculator::SMALL_BAG_FEE;
-constexpr double FareCalculator::MEDIUM_BAG_FEE;
-constexpr double FareCalculator::LARGE_BAG_FEE;
-
-class FileHandler {
-public:
-    static void saveTrip(const TripRecord& tr) {
-        ofstream f("trip_history.txt", ios::app);
-        if (f.is_open()) {
-            f << fixed << setprecision(2)
-              << "Customer: " << tr.customerName
-              << " | Vehicle: " << tr.vehicleType
-              << " | Distance: " << tr.distance << " km"
-              << " | Fare: Rs." << tr.fare
-              << " | Bag Fee: Rs." << tr.baggageFee
-              << " | Rating: " << (tr.rating >= 1 ? to_string(tr.rating) + "/5" : string("N/A"))
-              << " | Time: " << tr.timestamp << "\n";
-        }
-    }
-
-    static void showAllTrips() {
-        ifstream f("trip_history.txt");
-        if (!f.is_open()) { cout << "  No saved trip records found.\n"; return; }
-        cout << "\n  ===== ALL SAVED TRIPS =====\n";
-        string line;
-        while (getline(f, line)) cout << "  " << line << "\n";
-    }
-};
-
-class ReceiptGenerator {
-public:
-    static void print(const string& custName, const string& vehicle,
-                      double dist, double base, double baggageFee,
-                      double final_fare, const string& ts) {
-        cout << "\n";
-        cout << "  +------------------------------------------+\n";
-        cout << "  |     SMART VEHICLE FARE  -  RECEIPT        |\n";
-        cout << "  +------------------------------------------+\n";
-        cout << fixed << setprecision(2);
-        cout << "  Customer     : " << custName   << "\n";
-        cout << "  Vehicle      : " << vehicle    << "\n";
-        cout << "  Distance     : " << dist       << " km\n";
-        cout << "  Base Fare    : Rs." << base     << "\n";
-        cout << "  Baggage Fee  : Rs." << baggageFee << "\n";
-        cout << "  Final Fare   : Rs." << final_fare << "\n";
-        cout << "  Date & Time  : " << ts         << "\n";
-        cout << "  +------------------------------------------+\n";
-        cout << "  |   Thank you for riding with SmartFare!    |\n";
-        cout << "  +------------------------------------------+\n\n";
-    }
-};
-
-class AdminPanel {
-    FareCalculator& calc;
-    vector<TripRecord>& trips;
+    string username;
     string password;
+    string email;
+    double walletBalance;
+
+    User(string u, string p, string e, double bal = 0.0) : username(u), password(p), email(e), walletBalance(bal) {}
+
+    bool addFunds(double amount) {
+        walletBalance += amount;
+        return true;
+    }
+
+    bool deductFunds(double amount) {
+        if (amount > walletBalance) return false;
+        walletBalance -= amount;
+        return true;
+    }
+};
+
+class TripManager {
+private:
+    vector<Vehicle*> vehicles;
+    vector<TripRecord> tripHistory;
+    map<string, Coupon> coupons;
+    int nextVehicleID;
+    vector<User> users;
+    User* currentUser;
+    vector<Driver> drivers;
+    string nextTripIDPrefix;
+    int tripCounter;
+    double currentSurgeMultiplier;
+    vector<string> activeTrips;
+
+    string generateTripID() {
+        ostringstream oss;
+        oss << "TRIP" << tripCounter++;
+        return oss.str();
+    }
+
+    string getCurrentTimestamp() {
+        time_t now = time(0);
+        char* dt = ctime(&now);
+        return string(dt);
+    }
+
+    double applyCoupon(double fare, const string& couponCode) {
+        if (couponCode.empty()) return fare;
+        auto it = coupons.find(couponCode);
+        if (it == coupons.end() || !it->second.isValid()) {
+            throw InvalidCouponException();
+        }
+        double discount = fare * (it->second.getDiscount() / 100.0);
+        return fare - discount;
+    }
+
+    double calculateBaggageFee(int totalBags, Vehicle& vehicle) {
+        int free = vehicle.freeBagAllowance();
+        if (totalBags <= free) return 0.0;
+        return (totalBags - free) * 50.0;
+    }
+
+    string generateETA(double distanceKm) {
+        // Assume average speed 40 km/h
+        double hours = distanceKm / 40.0;
+        int minutes = static_cast<int>(hours * 60);
+        ostringstream oss;
+        oss << minutes << " mins";
+        return oss.str();
+    }
+
+    void saveToFile() {
+        ofstream file("trip_history.txt");
+        if (!file.is_open()) return;
+        for (const auto& trip : tripHistory) {
+            file << trip.tripID << "|"
+                 << trip.customerName << "|"
+                 << trip.vehicleType << "|"
+                 << trip.distance << "|"
+                 << trip.baseFare << "|"
+                 << trip.surgeMultiplier << "|"
+                 << trip.finalFare << "|"
+                 << trip.timestamp << "|"
+                 << trip.baggageFee << "|"
+                 << trip.rating << "|"
+                 << trip.couponUsed << "|"
+                 << trip.driverName << "|"
+                 << trip.userID << "|"
+                 << trip.etaMinutes << "|"
+                 << trip.paymentMethod << "|"
+                 << trip.status << "\n";
+        }
+        file.close();
+    }
+
+    void loadFromFile() {
+        ifstream file("trip_history.txt");
+        if (!file.is_open()) return;
+        string line;
+        while (getline(file, line)) {
+            stringstream ss(line);
+            string token;
+            vector<string> tokens;
+            while (getline(ss, token, '|')) {
+                tokens.push_back(token);
+            }
+            if (tokens.size() >= 16) {
+                TripRecord record(tokens[0], tokens[1], tokens[2],
+                                  stod(tokens[3]), stod(tokens[4]), stod(tokens[5]), stod(tokens[6]),
+                                  tokens[7], stod(tokens[8]), stoi(tokens[9]), tokens[10], 
+                                  tokens[11], tokens[12], stoi(tokens[13]), tokens[14], tokens[15]);
+                tripHistory.push_back(record);
+                if (tokens[15] == "Active") activeTrips.push_back(tokens[0]);
+            }
+        }
+        file.close();
+    }
 
 public:
-    AdminPanel(FareCalculator& c, vector<TripRecord>& t, const string& pwd = "admin123")
-        : calc(c), trips(t), password(pwd) {}
+    TripManager() : nextVehicleID(1), currentUser(nullptr), tripCounter(1), currentSurgeMultiplier(1.0) {
+        coupons["WELCOME10"] = Coupon("WELCOME10", 10.0);
+        coupons["PREMIUM20"] = Coupon("PREMIUM20", 20.0);
+        coupons["OFFPEAK15"] = Coupon("OFFPEAK15", 15.0);
+        
+        vehicles.push_back(new StandardCar(nextVehicleID++));
+        vehicles.push_back(new PremiumCar(nextVehicleID++));
+        vehicles.push_back(new AutoRickshaw(nextVehicleID++));
 
-    void run() {
-        string pwd;
-        cout << "  Enter admin password: ";
-        cin >> pwd;
-        if (pwd != password) { cout << "  Access denied!\n"; return; }
+        loadFromFile();
+        
+        drivers.push_back(Driver("D001", "John Doe"));
+        drivers.push_back(Driver("D002", "Jane Smith"));
+        drivers.push_back(Driver("D003", "Mike Ross"));
+    }
 
-        int ch;
-        do {
-            cout << "\n  ===== ADMIN PANEL =====\n"
-                 << "  1. Total Vehicles Created\n"
-                 << "  2. Total Earnings\n"
-                 << "  3. Total Customers\n"
-                 << "  4. View All Trip Records (file)\n"
-                 << "  5. Set Surge Multiplier\n"
-                 << "  6. Vehicle Ratings Summary\n"
-                 << "  7. Exit Admin\n"
-                 << "  Choice: ";
-            if (!(cin >> ch)) { cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); ch = 0; }
+    ~TripManager() {
+        for (auto v : vehicles) delete v;
+    }
 
-            switch (ch) {
-                case 1: cout << "  Total Vehicles: " << Vehicle::getTotalVehicles() << "\n"; break;
-                case 2: cout << fixed << setprecision(2)
-                             << "  Total Earnings: Rs." << Vehicle::getTotalEarnings() << "\n"; break;
-                case 3: cout << "  Total Customers: " << Customer::getTotalCustomers() << "\n"; break;
-                case 4: FileHandler::showAllTrips(); break;
-                case 5: {
-                    double m;
-                    cout << "  Enter surge multiplier (e.g. 1.5): ";
-                    if (!(cin >> m)) {
-                        cin.clear();
-                        cin.ignore(numeric_limits<streamsize>::max(), '\n');
-                        cout << "  ERROR: Invalid number entered!\n";
+    void addUser(string username, string password, string email, double balance) {
+        users.push_back(User(username, password, email, balance));
+    }
+
+    bool login(string username, string password) {
+        for (auto& user : users) {
+            if (user.username == username && user.password == password) {
+                currentUser = &user;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void logout() {
+        currentUser = nullptr;
+    }
+
+    bool isLoggedIn() const {
+        return currentUser != nullptr;
+    }
+
+    void setSurgeMultiplier(double multiplier) {
+        currentSurgeMultiplier = multiplier;
+    }
+
+    void bookTrip(const string& customerName, int vehicleIdx, double distanceKm, 
+                  const string& couponCode, int bags, string paymentMethod) {
+        if (vehicleIdx < 0 || vehicleIdx >= vehicles.size()) {
+            throw InvalidInputException("Invalid vehicle index!");
+        }
+        if (distanceKm < 0) {
+            throw InvalidDistanceException("Distance cannot be negative");
+        }
+
+        Vehicle* vehicle = vehicles[vehicleIdx];
+        double baseFare = vehicle->calculateBaseFare(distanceKm);
+        double surgeFare = baseFare * currentSurgeMultiplier;
+        
+        double fare = surgeFare;
+
+        string couponUsed = couponCode;
+        try {
+            fare = applyCoupon(fare, couponCode);
+        } catch (const InvalidCouponException& e) {
+            couponUsed = "";
+        }
+
+        double bagFee = 0.0;
+        if (bags > 0) {
+            bagFee = calculateBaggageFee(bags, *vehicle);
+            fare += bagFee;
+        }
+
+        string tripID = generateTripID();
+        Driver* driver = nullptr;
+        for (auto& d : drivers) {
+            if (d.currentStatus == "Available") {
+                driver = &d;
+                driver->assignTrip(tripID);
+                break;
+            }
+        }
+        
+        if (!driver) {
+            throw InvalidInputException("No drivers available!");
+        }
+
+        double eta = 0;
+        string etaStr = generateETA(distanceKm);
+
+        TripRecord record(tripID, customerName, vehicle->getVehicleName(), distanceKm, 
+                          baseFare, currentSurgeMultiplier, fare, getCurrentTimestamp(), 
+                          bagFee, -1, couponUsed, driver->name, 
+                          isLoggedIn() ? currentUser->username : "Guest", 
+                          stoi(etaStr), paymentMethod);
+        
+        tripHistory.push_back(record);
+        activeTrips.push_back(tripID);
+
+        if (paymentMethod == "Wallet") {
+            if (!isLoggedIn()) {
+                throw InvalidInputException("Wallet payment requires login!");
+            }
+            if (!currentUser->deductFunds(fare)) {
+                throw InsufficientFundsException();
+            }
+        }
+
+        saveToFile();
+
+        cout << "\n  ===== TRIP BOOKED SUCCESSFULLY =====\n";
+        cout << "  Trip ID: " << tripID << "\n";
+        cout << "  Driver:  " << driver->name << "\n";
+        cout << "  Vehicle: " << vehicle->getVehicleName() << (vehicle->getIsAC() ? " (AC)" : "") << "\n";
+        cout << "  Distance: " << distanceKm << " km\n";
+        cout << "  Base Fare: Rs." << fixed << setprecision(2) << baseFare << "\n";
+        if (currentSurgeMultiplier != 1.0) {
+            cout << "  Surge Multiplier: " << currentSurgeMultiplier << "x\n";
+        }
+        cout << "  Total Fare: Rs." << fare << "\n";
+        cout << "  ETA: " << etaStr << "\n";
+        cout << "  Status: Active\n";
+        cout << "====================================\n";
+    }
+
+    void cancelTrip(string tripID) {
+        bool found = false;
+        for (auto& trip : tripHistory) {
+            if (trip.tripID == tripID && trip.status == "Active") {
+                trip.status = "Cancelled";
+                // Find driver and free them
+                for (auto& driver : drivers) {
+                    if (driver.assignedTripID == tripID) {
+                        driver.completeTrip();
                         break;
                     }
-                    try { calc.setSurge(m); }
-                    catch (InvalidInputException& e) { cout << "  ERROR: " << e.what() << "\n"; }
-                    break;
                 }
-                case 6: {
-                    cout << "\n  ===== VEHICLE RATINGS SUMMARY =====\n";
-                    static const string types[NUM_VEHICLES] = {
-                        "Car", "Bus", "Bike", "Auto", "Luxury Car",
-                        "SUV", "MiniVan", "Truck", "Bicycle"
-                    };
-                    for (const string& vt : types) {
-                        double sum = 0; int count = 0;
-                        for (const auto& t : trips)
-                            if (t.vehicleType == vt && t.rating >= 1) { sum += t.rating; ++count; }
-                        cout << "  " << left << setw(12) << vt << ": ";
-                        if (count > 0)
-                            cout << fixed << setprecision(2) << (sum / count)
-                                 << " / 5  (" << count << " rating(s))\n";
-                        else
-                            cout << "No ratings yet\n";
-                    }
-                    break;
+                // Refund if paid via wallet
+                if (trip.paymentMethod == "Wallet" && isLoggedIn()) {
+                    currentUser->addFunds(trip.finalFare);
                 }
-                case 7: cout << "  Exiting admin panel.\n"; break;
-                default: cout << "  Invalid choice.\n";
+                found = true;
+                cout << "  Trip " << tripID << " cancelled.\n";
+                break;
             }
-        } while (ch != 7);
+        }
+        if (!found) {
+            cout << "  Trip " << tripID << " not found or not active.\n";
+        }
+        saveToFile();
+    }
+
+    void viewHistory() const {
+        if (tripHistory.empty()) {
+            cout << "  No trip history.\n";
+            return;
+        }
+        cout << "\n  ===== TRIP HISTORY =====\n";
+        for (size_t i = 0; i < tripHistory.size(); ++i) {
+            const auto& trip = tripHistory[i];
+            cout << fixed << setprecision(2);
+            cout << "  [" << i + 1 << "] ID: " << trip.tripID;
+            cout << " | User: " << trip.userID;
+            cout << " | Customer: " << trip.customerName;
+            cout << " | Vehicle: " << trip.vehicleType;
+            cout << " | Dist: " << trip.distance << " km";
+            cout << " | Fare: Rs." << trip.finalFare;
+            cout << " | Status: " << trip.status;
+            if (trip.rating != -1) {
+                cout << " | Rating: " << trip.rating << "/5";
+            } else {
+                cout << " | Rating: Not rated";
+            }
+            cout << "\n";
+        }
+        cout << "==========================\n";
+    }
+
+    void rateTrip(string tripID, int rating) {
+        bool found = false;
+        for (auto& trip : tripHistory) {
+            if (trip.tripID == tripID) {
+                if (trip.status == "Cancelled") {
+                    cout << "  Cannot rate a cancelled trip.\n";
+                    return;
+                }
+                trip.rating = rating;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            cout << "  Trip " << tripID << " not found.\n";
+        } else {
+            saveToFile();
+            cout << "  Trip " << tripID << " rated " << rating << "/5\n";
+        }
+    }
+
+    void displayVehicles() const {
+        cout << "\n  ===== AVAILABLE VEHICLES =====\n";
+        for (size_t i = 0; i < vehicles.size(); ++i) {
+            cout << "  [" << i << "] ";
+            vehicles[i]->displayDetails();
+        }
+        cout << "================================\n";
+    }
+
+    void addVehicle(int id, string name, double rate, double minFare, bool ac) {
+        Vehicle* newVehicle;
+        if (name == "Standard Car") newVehicle = new StandardCar(id);
+        else if (name == "Premium Car") newVehicle = new PremiumCar(id);
+        else if (name == "Auto Rickshaw") newVehicle = new AutoRickshaw(id);
+        else {
+            newVehicle = new StandardCar(id);
+        }
+        vehicles.push_back(newVehicle);
+        nextVehicleID++;
+        cout << "  Vehicle " << name << " added.\n";
+    }
+
+    void displayStats() const {
+        cout << "\n  ===== SYSTEM STATS =====\n";
+        cout << "  Total Vehicles: " << vehicles.size() << "\n";
+        cout << "  Active Drivers: " << count_if(drivers.begin(), drivers.end(), [](const Driver& d){ return d.currentStatus == "Available"; }) << "\n";
+        cout << "  Active Trips: " << activeTrips.size() << "\n";
+        cout << "  Registered Users: " << users.size() << "\n";
+        cout << "  Surge Multiplier: " << currentSurgeMultiplier << "x\n";
+        cout << "==========================\n";
+    }
+
+    void compareTwoVehicles(double distance) {
+        if (vehicles.size() < 2) return;
+        cout << "\n  ===== FARE COMPARISON (" << distance << " km, Surge: " << currentSurgeMultiplier << "x) =====\n";
+        for (size_t i = 0; i < vehicles.size(); ++i) {
+            for (size_t j = i + 1; j < vehicles.size(); ++j) {
+                double fare1 = vehicles[i]->calculateBaseFare(distance) * currentSurgeMultiplier;
+                double fare2 = vehicles[j]->calculateBaseFare(distance) * currentSurgeMultiplier;
+                cout << "  " << vehicles[i]->getVehicleName() << " (Rs." << fare1 << ") vs " << vehicles[j]->getVehicleName() << " (Rs." << fare2 << ")\n";
+            }
+        }
+    }
+
+    void exportHistory() {
+        ofstream file("report.csv");
+        if (!file.is_open()) return;
+        file << "TripID,Customer,Vehicle,Distance,Fare,Rating,Coupon,Driver,Status\n";
+        for (const auto& trip : tripHistory) {
+            file << trip.tripID << "," << trip.customerName << "," << trip.vehicleType << "," 
+                 << trip.distance << "," << trip.finalFare << "," << trip.rating << "," 
+                 << trip.couponUsed << "," << trip.driverName << "," << trip.status << "\n";
+        }
+        file.close();
+        cout << "  [EXPORTED] Report saved to 'report.csv'\n";
+    }
+
+    void simulateSurge() {
+        cout << "  Setting surge multiplier to 2.5x\n";
+        setSurgeMultiplier(2.5);
+    }
+
+    void refillWallet() {
+        if (currentUser) {
+            currentUser->addFunds(1000.0);
+            cout << "  Wallet refilled with Rs. 1000.\n";
+        }
     }
 };
 
-string currentTime() {
-    time_t now = time(nullptr);
-    string s = ctime(&now);
-    if (!s.empty() && s.back() == '\n') s.pop_back();
-    return s;
+void clearScreen() {
+    #ifdef _WIN32
+        system("cls");
+    #else
+        system("clear");
+    #endif
 }
 
-int safeIntInput(const string& prompt) {
-    int v;
-    while (true) {
-        cout << prompt;
-        if (cin >> v) return v;
-        cout << "  Invalid input. Try again.\n";
-        cin.clear();
-        cin.ignore(numeric_limits<streamsize>::max(), '\n');
-    }
-}
-
-double safeDoubleInput(const string& prompt) {
-    double v;
-    while (true) {
-        cout << prompt;
-        if (cin >> v) return v;
-        cout << "  Invalid input. Try again.\n";
-        cin.clear();
-        cin.ignore(numeric_limits<streamsize>::max(), '\n');
-    }
+void pause() {
+    cout << "\n  Press Enter to continue...";
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    cin.get();
 }
 
 int main() {
-    cout << "\n  ============================================\n";
-    cout << "     SMART VEHICLE FARE SYSTEM  -  VIT 2026\n";
-    cout << "  ============================================\n\n";
-
-    cout << "  Initialising vehicles...\n";
-    Vehicle* fleet[NUM_VEHICLES];
-    fleet[0] = new Car();
-    fleet[1] = new Bus();
-    fleet[2] = new Bike();
-    fleet[3] = new Auto();
-    fleet[4] = new LuxuryCar();
-    fleet[5] = new SUV();
-    fleet[6] = new MiniVan();
-    fleet[7] = new Truck();
-    fleet[8] = new Bicycle();
-    cout << "\n";
-
-    FareCalculator       calc;
-    vector<Customer*>    customers;
-    vector<TripRecord>   allTrips;
-    AdminPanel           admin(calc, allTrips);
-    Customer*            current = nullptr;
+    TripManager manager;
+    manager.addUser("admin", "password123", "admin@example.com", 5000.0);
+    manager.addUser("user1", "user1pass", "user1@example.com", 0.0);
 
     int choice;
-    do {
-        cout << "  ============================\n";
-        cout << "  MAIN MENU\n";
-        cout << "  1.  Register / Switch Customer\n";
-        cout << "  2.  Book a Ride\n";
-        cout << "  3.  View Available Vehicles\n";
-        cout << "  4.  My Trip History\n";
-        cout << "  5.  Compare Two Vehicle Fares (Friend Function)\n";
-        cout << "  6.  Filter Trips by Fare (Lambda)\n";
-        cout << "  7.  Merge Two Customers (Operator +)\n";
-        cout << "  8.  Admin Panel\n";
-        cout << "  9.  Exit\n";
-        cout << "  ============================\n";
-        choice = safeIntInput("  Choice: ");
 
-        switch (choice) {
-
-        case 1: {
-            string name, type;
-            cin.ignore(numeric_limits<streamsize>::max(), '\n');
-            cout << "  Enter name: ";
-            getline(cin, name);
-            cout << "  Customer type [regular / student / senior / member]: ";
-            getline(cin, type);
-            if (type != "student" && type != "senior" && type != "member") type = "regular";
-            current = new Customer(name, type);
-            customers.push_back(current);
-
-            string coupon;
-            cout << "  Coupon code (leave blank to skip): ";
-            getline(cin, coupon);
-            if (!coupon.empty()) current->setCoupon(coupon);
-            break;
+    while (true) {
+        clearScreen();
+        
+        if (manager.isLoggedIn()) {
+            cout << "\n  [LOGGED IN AS: " << manager.currentUser->username << " | Wallet: Rs." << fixed << setprecision(2) << manager.currentUser->walletBalance << "]\n";
+        } else {
+            cout << "\n  [NOT LOGGED IN]\n";
         }
 
-        case 2: {
-            if (!current) { cout << "  Please register a customer first!\n"; break; }
-            try {
-                cout << "\n  ===== AVAILABLE VEHICLES =====\n";
-                for (int i = 0; i < NUM_VEHICLES; ++i) {
-                    cout << "  " << (i + 1) << ". ";
-                    fleet[i]->displayDetails();
+        cout << "  ===== RIDE MANAGEMENT SYSTEM =====\n";
+        cout << "  1. Login\n";
+        cout << "  2. Book a Trip\n";
+        cout << "  3. Cancel Trip\n";
+        cout << "  4. View Trip History\n";
+        cout << "  5. Rate a Trip\n";
+        cout << "  6. Compare Vehicle Fares\n";
+        cout << "  7. View Available Vehicles\n";
+        cout << "  8. Manage Vehicles (Add)\n";
+        cout << "  9. View System Stats\n";
+        cout << "  10. Export Report (CSV)\n";
+        cout << "  11. Simulate Surge Pricing\n";
+        cout << "  12. Refill Wallet (If Logged In)\n";
+        cout << "  13. Logout\n";
+        cout << "  14. Exit\n";
+        cout << "====================================\n";
+        cout << "  Enter choice: ";
+        cin >> choice;
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+        try {
+            switch (choice) {
+                case 1: {
+                    string user, pass;
+                    cout << "  Username: ";
+                    getline(cin, user);
+                    cout << "  Password: ";
+                    getline(cin, pass);
+                    if (!manager.login(user, pass)) {
+                        cout << "  Login failed.\n";
+                    }
+                    break;
                 }
+                case 2: {
+                    string name;
+                    int vIdx;
+                    double dist;
+                    string coupon;
+                    int bags;
+                    string payMethod;
 
-                int vch = safeIntInput("  Select vehicle (1-9): ");
-                if (vch < 1 || vch > NUM_VEHICLES)
-                    throw InvalidInputException("Vehicle number must be between 1 and 9!");
+                    cout << "  Enter customer name: ";
+                    getline(cin, name);
 
-                double dist = safeDoubleInput("  Enter distance (km): ");
-                if (dist < 0)
-                    throw InvalidDistanceException("Distance cannot be negative!");
+                    manager.displayVehicles();
+                    cout << "  Select vehicle index (0-" << manager.vehicles.size() - 1 << "): ";
+                    cin >> vIdx;
 
-                char nChar, pChar;
-                cout << "  Night time ride? (y/n): "; cin >> nChar;
-                cout << "  Peak hour?       (y/n): "; cin >> pChar;
-                int    waitMins  = safeIntInput("  Waiting minutes (0 if none): ");
-                double luggageKg = safeDoubleInput("  Luggage kg (0 if none): ");
+                    cout << "  Enter distance (km): ";
+                    cin >> dist;
 
-                if (waitMins < 0)  throw InvalidInputException("Waiting time cannot be negative!");
-                if (luggageKg < 0) throw InvalidInputException("Luggage weight cannot be negative!");
+                    cout << "  Enter coupon code (or press Enter for none): ";
+                    getline(cin, coupon);
+                    coupon.erase(remove_if(coupon.begin(), coupon.end(), ::isspace), coupon.end());
 
-                Vehicle* chosen = fleet[vch - 1];
+                    cout << "  Enter number of baggage items: ";
+                    cin >> bags;
 
-                int smallBags = 0, mediumBags = 0, largeBags = 0;
-                double baggageFee = 0.0;
-                bool   freeApplied = false;
+                    cout << "  Payment Method (Cash/Wallet): ";
+                    cin >> payMethod;
 
-                if (chosen->allowsBaggage()) {
-                    smallBags  = safeIntInput("  Small bags to check-in  (0 if none): ");
-                    mediumBags = safeIntInput("  Medium bags to check-in (0 if none): ");
-                    largeBags  = safeIntInput("  Large bags to check-in  (0 if none): ");
-                    baggageFee = calc.applyBaggageFee(smallBags, mediumBags, largeBags,
-                                                       chosen->freeBagAllowance(), freeApplied);
-                } else {
-                    cout << "  NOTE: " << chosen->getVehicleName()
-                         << " does not support baggage check-in.\n";
+                    manager.bookTrip(name, vIdx, dist, coupon, bags, payMethod);
+                    break;
                 }
-
-                double baseFare = chosen->calculateFare(dist);
-
-                cout << "\n  ===== FARE BREAKDOWN =====\n";
-                cout << fixed << setprecision(2)
-                     << "  Base Fare : Rs." << baseFare << "\n";
-
-                double chargedFare = calc.applyCharges(baseFare,
-                    nChar == 'y' || nChar == 'Y',
-                    pChar == 'y' || pChar == 'Y',
-                    waitMins, luggageKg);
-
-                if (smallBags + mediumBags + largeBags > 0) {
-                    cout << "  [Baggage Check-in] " << (smallBags + mediumBags + largeBags)
-                         << " bag(s) -> Rs." << fixed << setprecision(2) << baggageFee;
-                    if (freeApplied) cout << "  (1 bag free)";
-                    cout << "\n";
+                case 3: {
+                    string tripID;
+                    cout << "  Enter Trip ID to cancel: ";
+                    cin >> tripID;
+                    manager.cancelTrip(tripID);
+                    break;
                 }
-                chargedFare += baggageFee;
-
-                double finalFare;
-                try {
-                    finalFare = calc.applyDiscount(chargedFare, *current);
-                } catch (InvalidCouponException& e) {
-                    cout << "  WARNING: " << e.what() << "\n";
-                    finalFare = chargedFare;
+                case 4: {
+                    manager.viewHistory();
+                    break;
                 }
-
-                finalFare = FareCalculator::roundFare(finalFare);
-                string ts  = currentTime();
-
-                ReceiptGenerator::print(current->getName(),
-                    chosen->getVehicleName(),
-                    dist, baseFare, baggageFee, finalFare, ts);
-
-                int rating = safeIntInput("  Rate this ride (1-5, 0 to skip): ");
-                if (rating < 1 || rating > 5) rating = -1;
-
-                TripRecord tr(current->getName(),
-                              chosen->getVehicleName(),
-                              dist, finalFare, ts, baggageFee, rating);
-                current->addTrip(tr);
-                allTrips.push_back(tr);
-                FileHandler::saveTrip(tr);
-                Vehicle::addEarnings(finalFare);
-
-            } catch (const InvalidDistanceException& e) {
-                cout << "  [EXCEPTION] " << e.what() << "\n";
-            } catch (const InvalidBaggageException& e) {
-                cout << "  [EXCEPTION] " << e.what() << "\n";
-            } catch (const InvalidInputException& e) {
-                cout << "  [EXCEPTION] " << e.what() << "\n";
-            } catch (const exception& e) {
-                cout << "  [ERROR] " << e.what() << "\n";
-            }
-            break;
-        }
-
-        case 3: {
-            cout << "\n  ===== ALL VEHICLES =====\n";
-            for (int i = 0; i < NUM_VEHICLES; ++i) {
-                cout << "  " << (i + 1) << ". ";
-                fleet[i]->displayDetails();
-            }
-            break;
-        }
-
-        case 4: {
-            if (!current) { cout << "  No customer registered.\n"; break; }
-            current->showHistory();
-            cout << fixed << setprecision(2)
-                 << "  Total Spent: Rs." << current->totalSpent() << "\n";
-            break;
-        }
-
-        case 5: {
-            try {
-                double dist = safeDoubleInput("  Distance for comparison (km): ");
-                int v1 = safeIntInput("  First vehicle  (1-9): ");
-                int v2 = safeIntInput("  Second vehicle (1-9): ");
-                if (v1 < 1 || v1 > NUM_VEHICLES || v2 < 1 || v2 > NUM_VEHICLES)
-                    throw InvalidInputException("Vehicle numbers must be 1-9!");
-                compareFares(*fleet[v1 - 1], *fleet[v2 - 1], dist);
-            } catch (const exception& e) {
-                cout << "  [EXCEPTION] " << e.what() << "\n";
-            }
-            break;
-        }
-
-        case 6: {
-            double threshold = safeDoubleInput("  Show trips with fare > Rs.: ");
-
-            auto isAboveThreshold = [threshold](const TripRecord& tr) {
-                return tr.fare > threshold;
-            };
-
-            cout << "\n  ===== TRIPS WITH FARE > Rs." << fixed << setprecision(2)
-                 << threshold << " =====\n";
-            bool found = false;
-            for (const auto& tr : allTrips) {
-                if (isAboveThreshold(tr)) {
-                    cout << "  " << tr.customerName << " | " << tr.vehicleType
-                         << " | " << tr.distance << " km | Rs." << tr.fare << "\n";
-                    found = true;
+                case 5: {
+                    manager.viewHistory();
+                    string tripID;
+                    int rating;
+                    cout << "  Enter Trip ID to rate: ";
+                    cin >> tripID;
+                    cout << "  Enter rating (1-5): ";
+                    cin >> rating;
+                    manager.rateTrip(tripID, rating);
+                    break;
+                }
+                case 6: {
+                    double dist;
+                    cout << "  Enter distance for comparison (km): ";
+                    cin >> dist;
+                    manager.compareTwoVehicles(dist);
+                    break;
+                }
+                case 7: {
+                    manager.displayVehicles();
+                    break;
+                }
+                case 8: {
+                    string name;
+                    double rate, minFare;
+                    bool ac = false;
+                    cout << "  Enter vehicle name: ";
+                    getline(cin, name);
+                    cout << "  Enter rate per km: ";
+                    cin >> rate;
+                    cout << "  Enter minimum fare: ";
+                    cin >> minFare;
+                    cout << "  Is AC? (1 for Yes, 0 for No): ";
+                    cin >> ac;
+                    manager.addVehicle(manager.nextVehicleID, name, rate, minFare, ac);
+                    break;
+                }
+                case 9: {
+                    manager.displayStats();
+                    break;
+                }
+                case 10: {
+                    manager.exportHistory();
+                    break;
+                }
+                case 11: {
+                    manager.simulateSurge();
+                    break;
+                }
+                case 12: {
+                    manager.refillWallet();
+                    break;
+                }
+                case 13: {
+                    manager.logout();
+                    break;
+                }
+                case 14: {
+                    cout << "  Exiting system...\n";
+                    return 0;
+                }
+                default: {
+                    cout << "  Invalid choice!\n";
                 }
             }
-            if (!found) cout << "  No trips found above this threshold.\n";
-            break;
+        } catch (const exception& e) {
+            cout << "  [ERROR] " << e.what() << "\n";
+        } catch (...) {
+            cout << "  [ERROR] Unknown error occurred!\n";
         }
-
-        case 7: {
-            if (customers.size() < 2) {
-                cout << "  Need at least 2 registered customers.\n"; break;
-            }
-            cout << "  Registered customers:\n";
-            for (size_t i = 0; i < customers.size(); ++i)
-                cout << "  " << (i + 1) << ". " << customers[i]->getName() << "\n";
-            int c1 = safeIntInput("  Select first customer:  ");
-            int c2 = safeIntInput("  Select second customer: ");
-            if (c1 < 1 || c2 < 1 ||
-                c1 > (int)customers.size() || c2 > (int)customers.size()) {
-                cout << "  Invalid selection.\n"; break;
-            }
-            Customer merged = *customers[c1-1] + *customers[c2-1];
-            merged.showHistory();
-            cout << fixed << setprecision(2)
-                 << "  Combined Total Spent: Rs." << merged.totalSpent() << "\n";
-            break;
-        }
-
-        case 8:
-            admin.run();
-            break;
-
-        case 9:
-            cout << "  Goodbye! Thank you for using SmartFare.\n";
-            break;
-
-        default:
-            cout << "  Invalid choice. Please enter 1-9.\n";
-        }
-
-    } while (choice != 9);
-
-    cout << "\n  ===== SESSION SUMMARY =====\n";
-    cout << "  Total Vehicle Types   : " << Vehicle::getTotalVehicles() << "\n";
-    cout << "  Total Customers       : " << Customer::getTotalCustomers() << "\n";
-    cout << fixed << setprecision(2)
-         << "  Total Earnings (Rs.)  : " << Vehicle::getTotalEarnings() << "\n";
-    cout << "  ===========================\n\n";
-    cout << "  All trip records have been saved to 'trip_history.txt'.\n";
-
-    cout << "  Releasing vehicle objects...\n";
-    for (int i = 0; i < NUM_VEHICLES; ++i) delete fleet[i];
-
-    cout << "  Releasing customer objects...\n";
-    for (auto* c : customers) delete c;
+        
+        pause();
+    }
 
     return 0;
-}
+} 

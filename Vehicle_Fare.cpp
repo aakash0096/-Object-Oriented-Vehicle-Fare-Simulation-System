@@ -40,6 +40,18 @@ public:
     const char* what() const noexcept override { return msg.c_str(); }
 };
 
+struct Driver {
+    string name;
+    string licenseNumber;
+    double rating;
+    int yearsExperience;
+    string phone;
+
+    Driver(const string& n = "Unassigned", const string& lic = "N/A",
+           double r = 5.0, int yrs = 0, const string& ph = "N/A")
+        : name(n), licenseNumber(lic), rating(r), yearsExperience(yrs), phone(ph) {}
+};
+
 struct TripRecord {
     string customerName;
     string vehicleType;
@@ -47,13 +59,17 @@ struct TripRecord {
     double fare;
     string timestamp;
     double baggageFee;
-    int    rating;   // -1 = not rated, 1-5 = star rating
+    int    rating;
+    string driverName;
+    string numberPlate;
 
     TripRecord(const string& cn, const string& vt,
                double d, double f, const string& ts,
-               double bagFee = 0.0, int rt = -1)
+               double bagFee = 0.0, int rt = -1,
+               const string& drv = "Unassigned", const string& plate = "N/A")
         : customerName(cn), vehicleType(vt), distance(d), fare(f),
-          timestamp(ts), baggageFee(bagFee), rating(rt) {}
+          timestamp(ts), baggageFee(bagFee), rating(rt),
+          driverName(drv), numberPlate(plate) {}
 };
 
 class Vehicle {
@@ -62,15 +78,35 @@ protected:
     string vehicleName;
     double ratePerKm;
     double minimumFare;
+    bool   hasAC;
+    string fuelType;
+    string vehicleColor;
+    string numberPlate;
+    bool   hasMusicSystem;
+    bool   hasLuggageCarrier;
+    int    doorCount;
+    int    seatBelts;
+    int    airbags;
+    double mileageKmPerLitre;
+    Driver assignedDriver;
 
     static int    totalVehicles;
     static double totalEarnings;
 
 public:
-    Vehicle(int id, const string& name, double rate, double minFare)
-        : vehicleID(id), vehicleName(name), ratePerKm(rate), minimumFare(minFare) {
+    Vehicle(int id, const string& name, double rate, double minFare,
+            bool ac, const string& fuel, const string& color,
+            const string& plate, bool music, bool luggageCarrier,
+            int doors, int belts, int bags, double mileage,
+            const Driver& driver)
+        : vehicleID(id), vehicleName(name), ratePerKm(rate), minimumFare(minFare),
+          hasAC(ac), fuelType(fuel), vehicleColor(color), numberPlate(plate),
+          hasMusicSystem(music), hasLuggageCarrier(luggageCarrier),
+          doorCount(doors), seatBelts(belts), airbags(bags),
+          mileageKmPerLitre(mileage), assignedDriver(driver) {
         ++totalVehicles;
-        cout << "  [CREATED] Vehicle object: " << vehicleName << "\n";
+        cout << "  [CREATED] Vehicle object: " << vehicleName
+             << "  (Plate: " << numberPlate << ")\n";
     }
 
     virtual ~Vehicle() {
@@ -84,7 +120,30 @@ public:
              << "  ID: " << vehicleID
              << "  Name: " << vehicleName
              << "  Rate/km: Rs." << ratePerKm
-             << "  Min Fare: Rs." << minimumFare << "\n";
+             << "  Min Fare: Rs." << minimumFare
+             << "  AC: " << (hasAC ? "Yes" : "No")
+             << "  Fuel: " << fuelType << "\n";
+    }
+
+    virtual void displayFullSpecs() const {
+        cout << "  ----- FULL SPECIFICATION: " << vehicleName << " -----\n";
+        cout << "  Plate No.        : " << numberPlate << "\n";
+        cout << "  Colour           : " << vehicleColor << "\n";
+        cout << "  Fuel Type        : " << fuelType << "\n";
+        cout << "  Air Conditioning : " << (hasAC ? "Available" : "Not Available") << "\n";
+        cout << "  Music System     : " << (hasMusicSystem ? "Available" : "Not Available") << "\n";
+        cout << "  Luggage Carrier  : " << (hasLuggageCarrier ? "Available" : "Not Available") << "\n";
+        cout << "  Doors            : " << doorCount << "\n";
+        cout << "  Seat Belts       : " << seatBelts << "\n";
+        cout << "  Airbags          : " << airbags << "\n";
+        cout << fixed << setprecision(1)
+             << "  Mileage          : " << mileageKmPerLitre << " km/l\n";
+        cout << "  Driver           : " << assignedDriver.name
+             << " (" << assignedDriver.yearsExperience << " yrs exp, "
+             << fixed << setprecision(1) << assignedDriver.rating << "/5)\n";
+        cout << "  Driver Phone     : " << assignedDriver.phone << "\n";
+        cout << "  Driver License   : " << assignedDriver.licenseNumber << "\n";
+        cout << "  ---------------------------------------------\n";
     }
 
     virtual bool allowsBaggage() const { return true; }
@@ -94,6 +153,13 @@ public:
     int    getVehicleID()    const { return vehicleID;   }
     double getRatePerKm()    const { return ratePerKm;   }
     double getMinimumFare()  const { return minimumFare; }
+    bool   getHasAC()        const { return hasAC;        }
+    string getFuelType()     const { return fuelType;     }
+    string getNumberPlate()  const { return numberPlate;  }
+    string getDriverName()   const { return assignedDriver.name; }
+    double getDriverRating() const { return assignedDriver.rating; }
+    bool   getHasMusicSystem() const { return hasMusicSystem; }
+    bool   getHasLuggageCarrier() const { return hasLuggageCarrier; }
 
     static int    getTotalVehicles()      { return totalVehicles; }
     static double getTotalEarnings()      { return totalEarnings; }
@@ -114,8 +180,10 @@ void compareFares(Vehicle& v1, Vehicle& v2, double distanceKm) {
 
     cout << "\n  ===== FARE COMPARISON  (" << distanceKm << " km) =====\n";
     cout << fixed << setprecision(2);
-    cout << "  " << v1.vehicleName << "  :  Rs." << fare1 << "\n";
-    cout << "  " << v2.vehicleName << "  :  Rs." << fare2 << "\n";
+    cout << "  " << v1.vehicleName << "  [AC:" << (v1.hasAC ? "Y" : "N")
+         << " Fuel:" << v1.fuelType << "]  :  Rs." << fare1 << "\n";
+    cout << "  " << v2.vehicleName << "  [AC:" << (v2.hasAC ? "Y" : "N")
+         << " Fuel:" << v2.fuelType << "]  :  Rs." << fare2 << "\n";
     if (fare1 < fare2)
         cout << "  >> " << v1.vehicleName << " is cheaper by Rs." << (fare2 - fare1) << "\n";
     else if (fare2 < fare1)
@@ -127,7 +195,10 @@ void compareFares(Vehicle& v1, Vehicle& v2, double distanceKm) {
 
 class Car : public Vehicle {
 public:
-    Car() : Vehicle(1, "Car", 15.0, 80.0) {}
+    Car() : Vehicle(1, "Car", 15.0, 80.0,
+                     true, "Petrol", "White", "RJ-01-AB-1234",
+                     true, true, 4, 5, 6, 16.5,
+                     Driver("Ramesh Kumar", "RJ0120230011234", 4.6, 6, "9876543210")) {}
 
     double calculateFare(double dist) override {
         if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
@@ -135,18 +206,24 @@ public:
         if      (dist <= 5)  fare = minimumFare;
         else if (dist <= 15) fare = minimumFare + (dist - 5)  * ratePerKm;
         else                 fare = minimumFare + 10 * ratePerKm + (dist - 15) * 12.0;
+        if (hasAC) fare += 10.0;
         return max(fare, minimumFare);
     }
 
     void displayDetails() const override {
-        cout << "  [CAR]        Rate: Rs.15/km | Min: Rs.80 | Slabs: 0-5(min), 5-15(Rs.15), 15+(Rs.12)\n";
+        cout << "  [CAR]        Rate: Rs.15/km | Min: Rs.80 | AC: Yes (+Rs.10) | Fuel: Petrol"
+             << " | Slabs: 0-5(min), 5-15(Rs.15), 15+(Rs.12)\n";
     }
 };
 
 class Bus : public Vehicle {
     int seatingCapacity;
 public:
-    Bus() : Vehicle(2, "Bus", 5.0, 30.0), seatingCapacity(40) {}
+    Bus() : Vehicle(2, "Bus", 5.0, 30.0,
+                     false, "Diesel", "Blue", "RJ-02-BC-5678",
+                     false, true, 2, 40, 0, 6.0,
+                     Driver("Suresh Yadav", "RJ0120180022345", 4.3, 12, "9876500001")),
+             seatingCapacity(40) {}
 
     double calculateFare(double dist) override {
         if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
@@ -155,13 +232,38 @@ public:
     }
 
     void displayDetails() const override {
-        cout << "  [BUS]        Rate: Rs.5/km  | Min: Rs.30 | Capacity: " << seatingCapacity << " seats\n";
+        cout << "  [BUS]        Rate: Rs.5/km  | Min: Rs.30 | AC: No | Fuel: Diesel"
+             << " | Capacity: " << seatingCapacity << " seats\n";
+    }
+};
+
+class AC_Bus : public Vehicle {
+    int seatingCapacity;
+public:
+    AC_Bus() : Vehicle(10, "AC Bus", 7.5, 50.0,
+                        true, "Diesel", "Silver", "RJ-10-BD-1010",
+                        true, true, 2, 35, 0, 5.5,
+                        Driver("Mahesh Chand", "RJ0120170033456", 4.5, 15, "9876500002")),
+                seatingCapacity(35) {}
+
+    double calculateFare(double dist) override {
+        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
+        double fare = (dist <= 10) ? minimumFare : minimumFare + (dist - 10) * ratePerKm;
+        return max(fare, minimumFare);
+    }
+
+    void displayDetails() const override {
+        cout << "  [AC BUS]     Rate: Rs.7.5/km| Min: Rs.50 | AC: Yes | Fuel: Diesel"
+             << " | Capacity: " << seatingCapacity << " seats\n";
     }
 };
 
 class Bike : public Vehicle {
 public:
-    Bike() : Vehicle(3, "Bike", 8.0, 40.0) {}
+    Bike() : Vehicle(3, "Bike", 8.0, 40.0,
+                      false, "Petrol", "Black", "RJ-03-CD-9012",
+                      false, false, 0, 1, 0, 45.0,
+                      Driver("Vikram Singh", "RJ0120220044567", 4.7, 3, "9876500003")) {}
 
     double calculateFare(double dist) override {
         if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
@@ -170,7 +272,8 @@ public:
     }
 
     void displayDetails() const override {
-        cout << "  [BIKE]       Rate: Rs.8/km  | Min: Rs.40 | Slabs: 0-3(min), 3+(Rs.8)\n";
+        cout << "  [BIKE]       Rate: Rs.8/km  | Min: Rs.40 | AC: No | Fuel: Petrol"
+             << " | Slabs: 0-3(min), 3+(Rs.8)\n";
     }
 
     bool allowsBaggage() const override { return false; }
@@ -178,7 +281,10 @@ public:
 
 class Auto : public Vehicle {
 public:
-    Auto() : Vehicle(4, "Auto", 10.0, 50.0) {}
+    Auto() : Vehicle(4, "Auto", 10.0, 50.0,
+                      false, "CNG", "Yellow-Green", "RJ-04-DE-3456",
+                      false, true, 3, 4, 0, 22.0,
+                      Driver("Ganesh Prasad", "RJ0120190055678", 4.2, 9, "9876500004")) {}
 
     double calculateFare(double dist) override {
         if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
@@ -187,14 +293,19 @@ public:
     }
 
     void displayDetails() const override {
-        cout << "  [AUTO]       Rate: Rs.10/km | Min: Rs.50 | Slabs: 0-4(min), 4+(Rs.10)\n";
+        cout << "  [AUTO]       Rate: Rs.10/km | Min: Rs.50 | AC: No | Fuel: CNG"
+             << " | Slabs: 0-4(min), 4+(Rs.10)\n";
     }
 };
 
 class LuxuryCar : public Vehicle {
     string carModel;
 public:
-    LuxuryCar() : Vehicle(5, "Luxury Car", 25.0, 200.0), carModel("Premium Sedan") {}
+    LuxuryCar() : Vehicle(5, "Luxury Car", 25.0, 200.0,
+                           true, "Petrol", "Jet Black", "RJ-05-EF-7890",
+                           true, true, 4, 5, 8, 12.0,
+                           Driver("Arjun Mehta", "RJ0120150066789", 4.9, 18, "9876500005")),
+                  carModel("Premium Sedan") {}
 
     double calculateFare(double dist) override {
         if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
@@ -202,7 +313,8 @@ public:
     }
 
     void displayDetails() const override {
-        cout << "  [LUXURY CAR] Rate: Rs.25/km | Min: Rs.200 | Model: " << carModel << " | 1 free bag\n";
+        cout << "  [LUXURY CAR] Rate: Rs.25/km | Min: Rs.200 | AC: Yes | Fuel: Petrol"
+             << " | Model: " << carModel << " | 1 free bag\n";
     }
 
     int freeBagAllowance() const override { return 1; }
@@ -211,7 +323,11 @@ public:
 class SUV : public Vehicle {
     int seatingCapacity;
 public:
-    SUV() : Vehicle(6, "SUV", 20.0, 150.0), seatingCapacity(7) {}
+    SUV() : Vehicle(6, "SUV", 20.0, 150.0,
+                     true, "Diesel", "Grey", "RJ-06-FG-2345",
+                     true, true, 5, 7, 6, 14.0,
+                     Driver("Deepak Rathore", "RJ0120160077890", 4.4, 11, "9876500006")),
+             seatingCapacity(7) {}
 
     double calculateFare(double dist) override {
         if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
@@ -220,7 +336,8 @@ public:
     }
 
     void displayDetails() const override {
-        cout << "  [SUV]        Rate: Rs.20/km | Min: Rs.150 | Seats: " << seatingCapacity << " | 1 free bag\n";
+        cout << "  [SUV]        Rate: Rs.20/km | Min: Rs.150 | AC: Yes | Fuel: Diesel"
+             << " | Seats: " << seatingCapacity << " | 1 free bag\n";
     }
 
     int freeBagAllowance() const override { return 1; }
@@ -229,7 +346,11 @@ public:
 class MiniVan : public Vehicle {
     int seatingCapacity;
 public:
-    MiniVan() : Vehicle(7, "MiniVan", 18.0, 120.0), seatingCapacity(8) {}
+    MiniVan() : Vehicle(7, "MiniVan", 18.0, 120.0,
+                         true, "Diesel", "Beige", "RJ-07-GH-6789",
+                         true, true, 4, 8, 4, 15.5,
+                         Driver("Rakesh Joshi", "RJ0120170088901", 4.1, 10, "9876500007")),
+                seatingCapacity(8) {}
 
     double calculateFare(double dist) override {
         if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
@@ -238,14 +359,19 @@ public:
     }
 
     void displayDetails() const override {
-        cout << "  [MINIVAN]    Rate: Rs.18/km | Min: Rs.120 | Seats: " << seatingCapacity << "\n";
+        cout << "  [MINIVAN]    Rate: Rs.18/km | Min: Rs.120 | AC: Yes | Fuel: Diesel"
+             << " | Seats: " << seatingCapacity << "\n";
     }
 };
 
 class Truck : public Vehicle {
     double capacityTons;
 public:
-    Truck() : Vehicle(8, "Truck", 22.0, 250.0), capacityTons(1.5) {}
+    Truck() : Vehicle(8, "Truck", 22.0, 250.0,
+                       false, "Diesel", "Red", "RJ-08-HI-0123",
+                       false, false, 2, 2, 2, 8.0,
+                       Driver("Bhagwan Das", "RJ0120140099012", 4.0, 20, "9876500008")),
+              capacityTons(1.5) {}
 
     double calculateFare(double dist) override {
         if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
@@ -254,8 +380,8 @@ public:
     }
 
     void displayDetails() const override {
-        cout << "  [TRUCK]      Rate: Rs.22/km | Min: Rs.250 | Capacity: " << capacityTons
-             << " tons | 1 free bag\n";
+        cout << "  [TRUCK]      Rate: Rs.22/km | Min: Rs.250 | AC: No | Fuel: Diesel"
+             << " | Capacity: " << capacityTons << " tons | 1 free bag\n";
     }
 
     int freeBagAllowance() const override { return 1; }
@@ -263,7 +389,10 @@ public:
 
 class Bicycle : public Vehicle {
 public:
-    Bicycle() : Vehicle(9, "Bicycle", 3.0, 10.0) {}
+    Bicycle() : Vehicle(9, "Bicycle", 3.0, 10.0,
+                         false, "None", "Green", "N/A",
+                         false, false, 0, 0, 0, 0.0,
+                         Driver("Self-Ride", "N/A", 5.0, 0, "N/A")) {}
 
     double calculateFare(double dist) override {
         if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
@@ -272,25 +401,54 @@ public:
     }
 
     void displayDetails() const override {
-        cout << "  [BICYCLE]    Rate: Rs.3/km  | Min: Rs.10 | Eco-friendly | No baggage allowed\n";
+        cout << "  [BICYCLE]    Rate: Rs.3/km  | Min: Rs.10 | AC: No | Fuel: None"
+             << " | Eco-friendly | No baggage allowed\n";
     }
 
     bool allowsBaggage() const override { return false; }
 };
 
-const int NUM_VEHICLES = 9;
+class ElectricCar : public Vehicle {
+    double batteryRangeKm;
+public:
+    ElectricCar() : Vehicle(11, "Electric Car", 17.0, 100.0,
+                             true, "Electric", "Pearl White", "RJ-11-EV-4321",
+                             true, true, 4, 5, 6, 0.0,
+                             Driver("Sanjay Verma", "RJ0120210110123", 4.8, 4, "9876500009")),
+                     batteryRangeKm(320.0) {}
+
+    double calculateFare(double dist) override {
+        if (dist < 0) throw InvalidDistanceException("Distance cannot be negative!");
+        double fare = (dist <= 5) ? minimumFare : minimumFare + (dist - 5) * ratePerKm;
+        return max(fare, minimumFare);
+    }
+
+    void displayDetails() const override {
+        cout << "  [ELECTRIC]   Rate: Rs.17/km | Min: Rs.100 | AC: Yes | Fuel: Electric"
+             << " | Range: " << fixed << setprecision(0) << batteryRangeKm
+             << " km | 1 free bag\n";
+    }
+
+    int freeBagAllowance() const override { return 1; }
+};
+
+const int NUM_VEHICLES = 11;
 
 class Customer {
     string name;
     string customerType;
     string couponCode;
+    string phoneNumber;
+    string preferredPayment;
     vector<TripRecord> tripHistory;
 
     static int totalCustomers;
 
 public:
-    Customer(const string& n, const string& type = "regular")
-        : name(n), customerType(type), couponCode("") {
+    Customer(const string& n, const string& type = "regular",
+             const string& phone = "N/A", const string& payment = "Cash")
+        : name(n), customerType(type), couponCode(""),
+          phoneNumber(phone), preferredPayment(payment) {
         ++totalCustomers;
         cout << "  [REGISTERED] Customer: " << name << " (" << customerType << ")\n";
     }
@@ -300,10 +458,14 @@ public:
     }
 
     void setCoupon(const string& code) { couponCode = code; }
+    void setPhone(const string& phone) { phoneNumber = phone; }
+    void setPaymentMethod(const string& method) { preferredPayment = method; }
 
     string getName()   const { return name;         }
     string getType()   const { return customerType; }
     string getCoupon() const { return couponCode;   }
+    string getPhone()  const { return phoneNumber;  }
+    string getPaymentMethod() const { return preferredPayment; }
 
     void addTrip(const TripRecord& tr) { tripHistory.push_back(tr); }
 
@@ -316,6 +478,8 @@ public:
                  << " | " << tripHistory[i].distance << " km"
                  << " | Rs." << tripHistory[i].fare
                  << " | Bag Fee: Rs." << tripHistory[i].baggageFee
+                 << " | Driver: " << tripHistory[i].driverName
+                 << " | Plate: " << tripHistory[i].numberPlate
                  << " | " << tripHistory[i].timestamp;
             if (tripHistory[i].rating >= 1)
                 cout << " | Rating: " << tripHistory[i].rating << "/5";
@@ -349,6 +513,8 @@ class FareCalculator {
     static constexpr double SMALL_BAG_FEE  = 20.0;
     static constexpr double MEDIUM_BAG_FEE = 40.0;
     static constexpr double LARGE_BAG_FEE  = 70.0;
+    static constexpr double AC_SURCHARGE   = 15.0;
+    static constexpr double MUSIC_SURCHARGE = 5.0;
 
 public:
     FareCalculator() : surgeMultiplier(1.0) {}
@@ -385,8 +551,25 @@ public:
         return fare;
     }
 
-    // Baggage check-in: per-bag fee by size, with a free-bag allowance for
-    // some vehicle types (applied to the costliest bag category first).
+    double applyComfortSurcharges(double fare, bool wantAC, bool vehicleHasAC,
+                                   bool wantMusic, bool vehicleHasMusic) {
+        if (wantAC && vehicleHasAC) {
+            fare += AC_SURCHARGE;
+            cout << "  [AC Comfort Surcharge Rs." << fixed << setprecision(2)
+                 << AC_SURCHARGE << "] Applied\n";
+        } else if (wantAC && !vehicleHasAC) {
+            cout << "  [NOTE] This vehicle has no AC. Surcharge skipped.\n";
+        }
+        if (wantMusic && vehicleHasMusic) {
+            fare += MUSIC_SURCHARGE;
+            cout << "  [Music System Surcharge Rs." << fixed << setprecision(2)
+                 << MUSIC_SURCHARGE << "] Applied\n";
+        } else if (wantMusic && !vehicleHasMusic) {
+            cout << "  [NOTE] This vehicle has no music system. Surcharge skipped.\n";
+        }
+        return fare;
+    }
+
     double applyBaggageFee(int smallBags, int mediumBags, int largeBags,
                             int freeAllowance, bool& freeApplied) {
         if (smallBags < 0 || mediumBags < 0 || largeBags < 0)
@@ -429,6 +612,8 @@ public:
 constexpr double FareCalculator::SMALL_BAG_FEE;
 constexpr double FareCalculator::MEDIUM_BAG_FEE;
 constexpr double FareCalculator::LARGE_BAG_FEE;
+constexpr double FareCalculator::AC_SURCHARGE;
+constexpr double FareCalculator::MUSIC_SURCHARGE;
 
 class FileHandler {
 public:
@@ -441,6 +626,8 @@ public:
               << " | Distance: " << tr.distance << " km"
               << " | Fare: Rs." << tr.fare
               << " | Bag Fee: Rs." << tr.baggageFee
+              << " | Driver: " << tr.driverName
+              << " | Plate: " << tr.numberPlate
               << " | Rating: " << (tr.rating >= 1 ? to_string(tr.rating) + "/5" : string("N/A"))
               << " | Time: " << tr.timestamp << "\n";
         }
@@ -459,7 +646,9 @@ class ReceiptGenerator {
 public:
     static void print(const string& custName, const string& vehicle,
                       double dist, double base, double baggageFee,
-                      double final_fare, const string& ts) {
+                      double final_fare, const string& ts,
+                      const string& driverName, const string& plate,
+                      const string& paymentMethod) {
         cout << "\n";
         cout << "  +------------------------------------------+\n";
         cout << "  |     SMART VEHICLE FARE  -  RECEIPT        |\n";
@@ -467,10 +656,13 @@ public:
         cout << fixed << setprecision(2);
         cout << "  Customer     : " << custName   << "\n";
         cout << "  Vehicle      : " << vehicle    << "\n";
+        cout << "  Driver       : " << driverName << "\n";
+        cout << "  Plate No.    : " << plate      << "\n";
         cout << "  Distance     : " << dist       << " km\n";
         cout << "  Base Fare    : Rs." << base     << "\n";
         cout << "  Baggage Fee  : Rs." << baggageFee << "\n";
         cout << "  Final Fare   : Rs." << final_fare << "\n";
+        cout << "  Payment Mode : " << paymentMethod << "\n";
         cout << "  Date & Time  : " << ts         << "\n";
         cout << "  +------------------------------------------+\n";
         cout << "  |   Thank you for riding with SmartFare!    |\n";
@@ -502,7 +694,8 @@ public:
                  << "  4. View All Trip Records (file)\n"
                  << "  5. Set Surge Multiplier\n"
                  << "  6. Vehicle Ratings Summary\n"
-                 << "  7. Exit Admin\n"
+                 << "  7. Driver Roster Summary\n"
+                 << "  8. Exit Admin\n"
                  << "  Choice: ";
             if (!(cin >> ch)) { cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); ch = 0; }
 
@@ -529,13 +722,13 @@ public:
                     cout << "\n  ===== VEHICLE RATINGS SUMMARY =====\n";
                     static const string types[NUM_VEHICLES] = {
                         "Car", "Bus", "Bike", "Auto", "Luxury Car",
-                        "SUV", "MiniVan", "Truck", "Bicycle"
+                        "SUV", "MiniVan", "Truck", "Bicycle", "AC Bus", "Electric Car"
                     };
                     for (const string& vt : types) {
                         double sum = 0; int count = 0;
                         for (const auto& t : trips)
                             if (t.vehicleType == vt && t.rating >= 1) { sum += t.rating; ++count; }
-                        cout << "  " << left << setw(12) << vt << ": ";
+                        cout << "  " << left << setw(14) << vt << ": ";
                         if (count > 0)
                             cout << fixed << setprecision(2) << (sum / count)
                                  << " / 5  (" << count << " rating(s))\n";
@@ -544,10 +737,27 @@ public:
                     }
                     break;
                 }
-                case 7: cout << "  Exiting admin panel.\n"; break;
+                case 7: {
+                    cout << "\n  ===== DRIVERS ON TRIP RECORDS =====\n";
+                    vector<string> seen;
+                    for (const auto& t : trips) {
+                        if (find(seen.begin(), seen.end(), t.driverName) == seen.end()) {
+                            seen.push_back(t.driverName);
+                            int count = 0;
+                            for (const auto& t2 : trips)
+                                if (t2.driverName == t.driverName) ++count;
+                            cout << "  " << left << setw(18) << t.driverName
+                                 << " | Plate: " << left << setw(15) << t.numberPlate
+                                 << " | Trips completed: " << count << "\n";
+                        }
+                    }
+                    if (seen.empty()) cout << "  No driver activity recorded yet.\n";
+                    break;
+                }
+                case 8: cout << "  Exiting admin panel.\n"; break;
                 default: cout << "  Invalid choice.\n";
             }
-        } while (ch != 7);
+        } while (ch != 8);
     }
 };
 
@@ -587,15 +797,17 @@ int main() {
 
     cout << "  Initialising vehicles...\n";
     Vehicle* fleet[NUM_VEHICLES];
-    fleet[0] = new Car();
-    fleet[1] = new Bus();
-    fleet[2] = new Bike();
-    fleet[3] = new Auto();
-    fleet[4] = new LuxuryCar();
-    fleet[5] = new SUV();
-    fleet[6] = new MiniVan();
-    fleet[7] = new Truck();
-    fleet[8] = new Bicycle();
+    fleet[0]  = new Car();
+    fleet[1]  = new Bus();
+    fleet[2]  = new Bike();
+    fleet[3]  = new Auto();
+    fleet[4]  = new LuxuryCar();
+    fleet[5]  = new SUV();
+    fleet[6]  = new MiniVan();
+    fleet[7]  = new Truck();
+    fleet[8]  = new Bicycle();
+    fleet[9]  = new AC_Bus();
+    fleet[10] = new ElectricCar();
     cout << "\n";
 
     FareCalculator       calc;
@@ -615,22 +827,28 @@ int main() {
         cout << "  5.  Compare Two Vehicle Fares (Friend Function)\n";
         cout << "  6.  Filter Trips by Fare (Lambda)\n";
         cout << "  7.  Merge Two Customers (Operator +)\n";
-        cout << "  8.  Admin Panel\n";
-        cout << "  9.  Exit\n";
+        cout << "  8.  View Full Vehicle Specifications\n";
+        cout << "  9.  Admin Panel\n";
+        cout << "  10. Exit\n";
         cout << "  ============================\n";
         choice = safeIntInput("  Choice: ");
 
         switch (choice) {
 
         case 1: {
-            string name, type;
+            string name, type, phone, payment;
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
             cout << "  Enter name: ";
             getline(cin, name);
+            cout << "  Phone number: ";
+            getline(cin, phone);
             cout << "  Customer type [regular / student / senior / member]: ";
             getline(cin, type);
             if (type != "student" && type != "senior" && type != "member") type = "regular";
-            current = new Customer(name, type);
+            cout << "  Preferred payment [Cash / Card / UPI / Wallet]: ";
+            getline(cin, payment);
+            if (payment.empty()) payment = "Cash";
+            current = new Customer(name, type, phone, payment);
             customers.push_back(current);
 
             string coupon;
@@ -649,17 +867,19 @@ int main() {
                     fleet[i]->displayDetails();
                 }
 
-                int vch = safeIntInput("  Select vehicle (1-9): ");
+                int vch = safeIntInput("  Select vehicle (1-" + to_string(NUM_VEHICLES) + "): ");
                 if (vch < 1 || vch > NUM_VEHICLES)
-                    throw InvalidInputException("Vehicle number must be between 1 and 9!");
+                    throw InvalidInputException("Vehicle number is out of range!");
 
                 double dist = safeDoubleInput("  Enter distance (km): ");
                 if (dist < 0)
                     throw InvalidDistanceException("Distance cannot be negative!");
 
-                char nChar, pChar;
+                char nChar, pChar, acChar, musicChar;
                 cout << "  Night time ride? (y/n): "; cin >> nChar;
                 cout << "  Peak hour?       (y/n): "; cin >> pChar;
+                cout << "  Request AC comfort surcharge? (y/n): "; cin >> acChar;
+                cout << "  Request music system?         (y/n): "; cin >> musicChar;
                 int    waitMins  = safeIntInput("  Waiting minutes (0 if none): ");
                 double luggageKg = safeDoubleInput("  Luggage kg (0 if none): ");
 
@@ -694,6 +914,10 @@ int main() {
                     pChar == 'y' || pChar == 'Y',
                     waitMins, luggageKg);
 
+                chargedFare = calc.applyComfortSurcharges(chargedFare,
+                    acChar == 'y' || acChar == 'Y', chosen->getHasAC(),
+                    musicChar == 'y' || musicChar == 'Y', chosen->getHasMusicSystem());
+
                 if (smallBags + mediumBags + largeBags > 0) {
                     cout << "  [Baggage Check-in] " << (smallBags + mediumBags + largeBags)
                          << " bag(s) -> Rs." << fixed << setprecision(2) << baggageFee;
@@ -715,14 +939,17 @@ int main() {
 
                 ReceiptGenerator::print(current->getName(),
                     chosen->getVehicleName(),
-                    dist, baseFare, baggageFee, finalFare, ts);
+                    dist, baseFare, baggageFee, finalFare, ts,
+                    chosen->getDriverName(), chosen->getNumberPlate(),
+                    current->getPaymentMethod());
 
                 int rating = safeIntInput("  Rate this ride (1-5, 0 to skip): ");
                 if (rating < 1 || rating > 5) rating = -1;
 
                 TripRecord tr(current->getName(),
                               chosen->getVehicleName(),
-                              dist, finalFare, ts, baggageFee, rating);
+                              dist, finalFare, ts, baggageFee, rating,
+                              chosen->getDriverName(), chosen->getNumberPlate());
                 current->addTrip(tr);
                 allTrips.push_back(tr);
                 FileHandler::saveTrip(tr);
@@ -760,10 +987,10 @@ int main() {
         case 5: {
             try {
                 double dist = safeDoubleInput("  Distance for comparison (km): ");
-                int v1 = safeIntInput("  First vehicle  (1-9): ");
-                int v2 = safeIntInput("  Second vehicle (1-9): ");
+                int v1 = safeIntInput("  First vehicle  (1-" + to_string(NUM_VEHICLES) + "): ");
+                int v2 = safeIntInput("  Second vehicle (1-" + to_string(NUM_VEHICLES) + "): ");
                 if (v1 < 1 || v1 > NUM_VEHICLES || v2 < 1 || v2 > NUM_VEHICLES)
-                    throw InvalidInputException("Vehicle numbers must be 1-9!");
+                    throw InvalidInputException("Vehicle numbers are out of range!");
                 compareFares(*fleet[v1 - 1], *fleet[v2 - 1], dist);
             } catch (const exception& e) {
                 cout << "  [EXCEPTION] " << e.what() << "\n";
@@ -784,7 +1011,8 @@ int main() {
             for (const auto& tr : allTrips) {
                 if (isAboveThreshold(tr)) {
                     cout << "  " << tr.customerName << " | " << tr.vehicleType
-                         << " | " << tr.distance << " km | Rs." << tr.fare << "\n";
+                         << " | " << tr.distance << " km | Rs." << tr.fare
+                         << " | Driver: " << tr.driverName << "\n";
                     found = true;
                 }
             }
@@ -812,19 +1040,26 @@ int main() {
             break;
         }
 
-        case 8:
+        case 8: {
+            int vch = safeIntInput("  Select vehicle for full spec (1-" + to_string(NUM_VEHICLES) + "): ");
+            if (vch < 1 || vch > NUM_VEHICLES) { cout << "  Invalid selection.\n"; break; }
+            fleet[vch - 1]->displayFullSpecs();
+            break;
+        }
+
+        case 9:
             admin.run();
             break;
 
-        case 9:
+        case 10:
             cout << "  Goodbye! Thank you for using SmartFare.\n";
             break;
 
         default:
-            cout << "  Invalid choice. Please enter 1-9.\n";
+            cout << "  Invalid choice. Please enter 1-10.\n";
         }
 
-    } while (choice != 9);
+    } while (choice != 10);
 
     cout << "\n  ===== SESSION SUMMARY =====\n";
     cout << "  Total Vehicle Types   : " << Vehicle::getTotalVehicles() << "\n";
